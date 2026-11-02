@@ -5,7 +5,6 @@ const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 
 app.use(express.json());
 
-// صفحه وب رابط کاربری زیبا و مدرن
 app.get('/', (req, res) => {
   res.send(`<!DOCTYPE html>
 <html lang="fa" dir="rtl">
@@ -85,7 +84,6 @@ app.get('/', (req, res) => {
 </html>`);
 });
 
-// API اتصال به OpenRouter
 app.post('/api/generate-text', async (req, res) => {
   const { prompt, platform } = req.body;
   if (!prompt) return res.status(400).json({ error: 'موضوع الزامی است' });
@@ -98,7 +96,7 @@ app.post('/api/generate-text', async (req, res) => {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'meta-llama/llama-3.2-3b-instruct:free',
+        model: 'google/gemini-2.0-flash-exp:free',
         messages: [
           {
             role: 'system',
