@@ -1,227 +1,155 @@
 package ir.contentsaz.app
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.os.Bundle
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
+import android.view.View
+import android.widget.*
+import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
+import com.google.android.material.button.MaterialButton
+import com.google.android.material.textfield.TextInputEditText
+import com.squareup.picasso.Picasso
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
-import java.io.BufferedReader
-import java.io.InputStreamReader
-import java.io.OutputStreamWriter
-import java.net.HttpURLConnection
-import java.net.URL
+import java.util.concurrent.TimeUnit
 
-class MainActivity : ComponentActivity() {
+class MainActivity : AppCompatActivity() {
 
-    private val backendBaseUrl = "https://content-saz-1.onrender.com"
+    private val backendUrl = "https://content-saz-1.onrender.com"
+
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(60, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS)
+        .writeTimeout(60, TimeUnit.SECONDS)
+        .build()
+
+    private lateinit var etTopic: TextInputEditText
+    private lateinit var spinnerPlatform: Spinner
+    private lateinit var spinnerTone: Spinner
+    private lateinit var btnGenerateText: MaterialButton
+    private lateinit var btnGenerateImage: MaterialButton
+    private lateinit var btnCopy: MaterialButton
+    private lateinit var progressBar: ProgressBar
+    private lateinit var tvResult: TextView
+    private lateinit var ivGenerated: ImageView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent {
-            MaterialTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
-                ) {
-                    ContentSazScreen(
-                        onGenerateText = { topic, platform, tone ->
-                            requestGenerateText(topic, platform, tone)
-                        },
-                        onGenerateImage = { prompt ->
-                            requestGenerateImage(prompt)
-                        }
-                    )
+        setContentView(R.layout.activity_main)
+
+        etTopic = findViewById(R.id.etTopic)
+        spinnerPlatform = findViewById(R.id.spinnerPlatform)
+        spinnerTone = findViewById(R.id.spinnerTone)
+        btnGenerateText = findViewById(R.id.btnGenerateText)
+        btnGenerateImage = findViewById(R.id.btnGenerateImage)
+        btnCopy = findViewById(R.id.btnCopy)
+        progressBar = findViewById(R.id.progressBar)
+        tvResult = findViewById(R.id.tvResult)
+        ivGenerated = findViewById(R.id.ivGenerated)
+
+        val platforms = arrayOf("اینستاگرام", "ایتا", "روبیکا", "تلگرام")
+        val platformAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, platforms)
+        spinnerPlatform.adapter = platformAdapter
+
+        val tones = arrayOf("صمیمی", "رسمی", "آموزشی", "تبلیغاتی")
+        val toneAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, tones)
+        spinnerTone.adapter = toneAdapter
+
+        btnGenerateText.setOnClickListener {
+            val topic = etTopic.text.toString().trim()
+            if (topic.isEmpty()) {
+                Toast.makeText(this, "موضوع را وارد کنید", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            generateText(topic, spinnerPlatform.selectedItem.toString(), spinnerTone.selectedItem.toString())
+        }
+
+        btnGenerateImage.setOnClickListener {
+            val topic = etTopic.text.toString().trim()
+            if (topic.isEmpty()) {
+                Toast.makeText(this, "موضوع را وارد کنید", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            generateImage(topic)
+        }
+
+        btnCopy.setOnClickListener {
+            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            val clip = ClipData.newPlainText("Result", tvResult.text.toString())
+            clipboard.setPrimaryClip(clip)
+            Toast.makeText(this, "کپی شد", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun generateText(topic: String, platform: String, tone: String) {
+        progressBar.visibility = View.VISIBLE
+        tvResult.text = "در حال تولید..."
+        
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val json = JSONObject().apply {
+                    put("topic", topic)
+                    put("platform", platform)
+                    put("tone", tone)
+                }
+                val body = json.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
+                val request = Request.Builder().url("$backendUrl/api/generate-text").post(body).build()
+                val response = client.newCall(request).execute()
+                val data = response.body?.string()
+                
+                withContext(Dispatchers.Main) {
+                    progressBar.visibility = View.GONE
+                    if (response.isSuccessful) {
+                        tvResult.text = JSONObject(data!!).optString("content")
+                    } else {
+                        tvResult.text = "خطای سرور: ${response.code}"
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    progressBar.visibility = View.GONE
+                    tvResult.text = "خطا: ${e.message}"
                 }
             }
         }
     }
 
-    private suspend fun requestGenerateText(topic: String, platform: String, tone: String): String =
-        withContext(Dispatchers.IO) {
-            val url = URL("$backendBaseUrl/api/generate-text")
-            val conn = (url.openConnection() as HttpURLConnection).apply {
-                requestMethod = "POST"
-                setRequestProperty("Content-Type", "application/json; charset=UTF-8")
-                doOutput = true
-                connectTimeout = 60000
-                readTimeout = 60000
-            }
-
-            val body = JSONObject().apply {
-                put("topic", topic)
-                put("platform", platform)
-                put("tone", tone)
-            }
-
-            OutputStreamWriter(conn.outputStream, "UTF-8").use { it.write(body.toString()) }
-
-            val responseCode = conn.responseCode
-            val stream = if (responseCode in 200..299) conn.inputStream else conn.errorStream
-            val responseText = BufferedReader(InputStreamReader(stream, "UTF-8")).use { it.readText() }
-
-            if (responseCode !in 200..299) {
-                throw RuntimeException("خطای سرور ($responseCode): $responseText")
-            }
-
-            val json = JSONObject(responseText)
-            json.optString("result", "متنی دریافت نشد")
-        }
-
-    private suspend fun requestGenerateImage(prompt: String): String =
-        withContext(Dispatchers.IO) {
-            val url = URL("$backendBaseUrl/api/generate-image")
-            val conn = (url.openConnection() as HttpURLConnection).apply {
-                requestMethod = "POST"
-                setRequestProperty("Content-Type", "application/json; charset=UTF-8")
-                doOutput = true
-                connectTimeout = 60000
-                readTimeout = 60000
-            }
-
-            val body = JSONObject().apply {
-                put("prompt", prompt)
-            }
-
-            OutputStreamWriter(conn.outputStream, "UTF-8").use { it.write(body.toString()) }
-
-            val responseCode = conn.responseCode
-            val stream = if (responseCode in 200..299) conn.inputStream else conn.errorStream
-            val responseText = BufferedReader(InputStreamReader(stream, "UTF-8")).use { it.readText() }
-
-            if (responseCode !in 200..299) {
-                throw RuntimeException("خطای سرور ($responseCode): $responseText")
-            }
-
-            val json = JSONObject(responseText)
-            json.optString("imageUrl", "لینکی دریافت نشد")
-        }
-}
-
-@Composable
-fun ContentSazScreen(
-    onGenerateText: suspend (String, String, String) -> String,
-    onGenerateImage: suspend (String) -> String
-) {
-    val scope = rememberCoroutineScope()
-    var topic by remember { mutableStateOf("") }
-    var platform by remember { mutableStateOf("اینستاگرام") }
-    var tone by remember { mutableStateOf("جذاب و صمیمی") }
-    var resultText by remember { mutableStateOf("") }
-    var isLoadingText by remember { mutableStateOf(false) }
-    var isLoadingImage by remember { mutableStateOf(false) }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
-            .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
-        Text("تولیدکننده محتوا (هوش مصنوعی)", style = MaterialTheme.typography.headlineSmall)
-
-        OutlinedTextField(
-            value = topic,
-            onValueChange = { topic = it },
-            label = { Text("موضوع یا ایده محتوا") },
-            placeholder = { Text("مثال: ۵ راز فروش بیشتر در روبیکا") },
-            modifier = Modifier.fillMaxWidth()
-        )
-
-        OutlinedTextField(
-            value = platform,
-            onValueChange = { platform = it },
-            label = { Text("پلتفرم (اینستاگرام، روبیکا، ایتا، بله)") },
-            modifier = Modifier.fillMaxWidth()
-        )
-
-        OutlinedTextField(
-            value = tone,
-            onValueChange = { tone = it },
-            label = { Text("لحن متن (صمیمی، رسمی، فروشگاهی)") },
-            modifier = Modifier.fillMaxWidth()
-        )
-
-        Button(
-            onClick = {
-                if (topic.isBlank()) {
-                    errorMessage = "لطفاً موضوع محتوا را بنویسید"
-                    return@Button
-                }
-                isLoadingText = true
-                errorMessage = null
-                scope.launch {
-                    try {
-                        resultText = onGenerateText(topic, platform, tone)
-                    } catch (e: Exception) {
-                        errorMessage = e.message ?: "خطای ناشناخته در ارتباط با سرور"
-                    } finally {
-                        isLoadingText = false
+    private fun generateImage(prompt: String) {
+        progressBar.visibility = View.VISIBLE
+        tvResult.text = "در حال ساخت تصویر..."
+        ivGenerated.visibility = View.GONE
+        
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val json = JSONObject().apply { put("prompt", prompt) }
+                val body = json.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
+                val request = Request.Builder().url("$backendUrl/api/generate-image").post(body).build()
+                val response = client.newCall(request).execute()
+                val data = response.body?.string()
+                
+                withContext(Dispatchers.Main) {
+                    progressBar.visibility = View.GONE
+                    if (response.isSuccessful) {
+                        val url = JSONObject(data!!).optString("imageUrl")
+                        ivGenerated.visibility = View.VISIBLE
+                        Picasso.get().load(url).into(ivGenerated)
+                        tvResult.text = "تصویر ساخته شد."
+                    } else {
+                        tvResult.text = "خطا در تصویر: ${response.code}"
                     }
                 }
-            },
-            enabled = !isLoadingText,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(if (isLoadingText) "در حال تولید متن... (کمی صبر کنید)" else "تولید متن محتوا")
-        }
-
-        Button(
-            onClick = {
-                if (topic.isBlank()) {
-                    errorMessage = "لطفاً ابتدا موضوع یا پرامپت تصویر را بنویسید"
-                    return@Button
-                }
-                isLoadingImage = true
-                errorMessage = null
-                scope.launch {
-                    try {
-                        val img = onGenerateImage(topic)
-                        resultText = "لینک تصویر ساخته شده:\n$img"
-                    } catch (e: Exception) {
-                        errorMessage = e.message ?: "خطای ناشناخته در ارتباط با سرور"
-                    } finally {
-                        isLoadingImage = false
-                    }
-                }
-            },
-            enabled = !isLoadingImage,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(if (isLoadingImage) "در حال تولید تصویر..." else "تولید تصویر با هوش مصنوعی")
-        }
-
-        errorMessage?.let {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(
-                    text = it,
-                    color = MaterialTheme.colorScheme.onErrorContainer,
-                    modifier = Modifier.padding(12.dp)
-                )
-            }
-        }
-
-        if (resultText.isNotBlank()) {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                SelectionContainer {
-                    Text(
-                        text = resultText,
-                        modifier = Modifier.padding(12.dp),
-                        style = MaterialTheme.typography.bodyMedium
-                    )
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    progressBar.visibility = View.GONE
+                    tvResult.text = "خطا: ${e.message}"
                 }
             }
         }
